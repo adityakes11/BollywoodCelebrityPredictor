@@ -54,3 +54,13 @@ If you are looking at this project from a portfolio perspective, here is what it
 
 ## ⚙️ Configuration
 You can edit `config.py` to change settings like the number of top matches (`TOP_N_MATCHES`), similarity threshold, and directory paths.
+
+## ▶️ Run locally with Docker (optional)
+
+```bash
+# Build the Docker image
+docker build -t bollywood-predictor .
+
+# Run the container and expose Streamlit port
+docker run -p 8501:8501 bollywood-predictor
+```
