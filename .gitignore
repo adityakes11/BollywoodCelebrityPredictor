@@ -1,6 +1,18 @@
+# Virtual environments
 venv/
 venv37/
+.env/
+# IDE / editor files
 .idea/
+.vscode/
+# Python cache files
 __pycache__/
+*.py[cod]
+# Data files (large binaries) – keep out of repo
 *.pkl
+*.h5
+# Uploaded images
 uploads/
+# OS specific files
+.DS_Store
+Thumbs.db

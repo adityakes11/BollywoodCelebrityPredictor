@@ -1,0 +1,11 @@
+streamlit
+numpy
+pillow
+opencv-python
+mtcnn
+tensorflow
+keras
+keras-vggface==0.6
+keras_applications==1.0.8
+scikit-learn
+tqdm

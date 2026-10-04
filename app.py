@@ -1,163 +1,129 @@
-from keras_vggface.utils import preprocess_input
-from keras_vggface.vggface import VGGFace
-import pickle
-from sklearn.metrics.pairwise import cosine_similarity
 import streamlit as st
-from PIL import Image
 import os
-import cv2
+from PIL import Image
 from mtcnn import MTCNN
-import numpy as np
+from keras_vggface.vggface import VGGFace
+import config
+import utils
+
+st.set_page_config(page_title="Bollywood Celebrity Match", page_icon="🎬", layout="wide")
 
 # -----------------------------
-# Load Face Detector and Model
+# Caching Model and Data
 # -----------------------------
-detector = MTCNN()
+@st.cache_resource
+def load_models():
+    detector = MTCNN()
+    model = VGGFace(
+        model=config.MODEL_NAME,
+        include_top=False,
+        input_shape=config.INPUT_SHAPE,
+        pooling=config.POOLING
+    )
+    return detector, model
 
-model = VGGFace(
-    model='resnet50',
-    include_top=False,
-    input_shape=(224,224,3),
-    pooling='avg'
-)
+@st.cache_data
+def get_data():
+    return utils.load_data()
 
 # -----------------------------
-# Load Embeddings
+# App State & Setup
 # -----------------------------
-feature_list = np.array(pickle.load(open('embedding.pkl','rb')))
-filenames = pickle.load(open('filenames.pkl','rb'))
+detector, model = load_models()
+feature_list, filenames = get_data()
 
-# -----------------------------
-# Save Uploaded Image
-# -----------------------------
+if feature_list is None or filenames is None:
+    st.error(f"❌ Could not load data. Ensure {config.EMBEDDINGS_FILE} and {config.FILENAMES_FILE} exist by running feature_extractor.py.")
+    st.stop()
+
 def save_uploaded_image(uploaded_image):
-
     try:
+        # Validate extension
+        ext = uploaded_image.name.split('.')[-1].lower()
+        if ext not in config.ALLOWED_EXTENSIONS:
+            st.error(f"❌ Unsupported file format: {ext}. Allowed: {', '.join(config.ALLOWED_EXTENSIONS)}")
+            return None
 
-        if not os.path.exists("uploads"):
-            os.makedirs("uploads")
+        if not os.path.exists(config.UPLOADS_DIR):
+            os.makedirs(config.UPLOADS_DIR)
 
-        file_path = os.path.join("uploads", uploaded_image.name)
-
+        file_path = os.path.join(config.UPLOADS_DIR, uploaded_image.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_image.getbuffer())
-
         return file_path
-
-    except:
+    except Exception as e:
+        st.error(f"❌ Error saving file: {e}")
         return None
 
+# -----------------------------
+# Streamlit UI Sidebar
+# -----------------------------
+st.sidebar.title("Instructions 📝")
+st.sidebar.markdown(f"""
+1. Upload an image of yourself or choose a sample.
+2. We detect your face and extract features.
+3. We compare you against a database of Bollywood celebrities.
+4. Top {config.TOP_N_MATCHES} closest matches are shown!
+
+**Tips:**
+- Ensure good lighting 💡
+- Look straight into the camera 📷
+- Only 1 face per image for best results.
+""")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Try a Sample Image")
+sample_files = os.listdir(config.SAMPLE_DIR) if os.path.exists(config.SAMPLE_DIR) else []
+selected_sample = st.sidebar.selectbox("Choose a sample", ["None"] + sample_files)
 
 # -----------------------------
-# Extract Face Features
-# -----------------------------
-def extract_features(img_path, model, detector):
-
-    img = cv2.imread(img_path)
-
-    if img is None:
-        return None
-
-    # Convert BGR -> RGB (IMPORTANT)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    results = detector.detect_faces(img)
-
-    if len(results) == 0:
-        return None
-
-    x, y, width, height = results[0]['box']
-
-    # Fix negative coordinates
-    x = max(0, x)
-    y = max(0, y)
-
-    face = img[y:y+height, x:x+width]
-
-    if face.size == 0:
-        return None
-
-    # Resize
-    face = cv2.resize(face, (224,224))
-
-    face_array = np.asarray(face).astype('float32')
-
-    expanded_img = np.expand_dims(face_array, axis=0)
-
-    preprocessed_img = preprocess_input(expanded_img)
-
-    result = model.predict(preprocessed_img).flatten()
-
-    return result
-
-
-# -----------------------------
-# Recommend Celebrity
-# -----------------------------
-def recommend(feature_list, features):
-
-    similarity = []
-
-    for i in range(len(feature_list)):
-
-        similarity.append(
-            cosine_similarity(
-                features.reshape(1,-1),
-                feature_list[i].reshape(1,-1)
-            )[0][0]
-        )
-
-    index_pos = sorted(
-        list(enumerate(similarity)),
-        reverse=True,
-        key=lambda x:x[1]
-    )[0][0]
-
-    return index_pos
-
-
-# -----------------------------
-# Streamlit UI
+# Streamlit UI Main Page
 # -----------------------------
 st.title("🎬 Which Bollywood Celebrity Are You?")
 
-uploaded_image = st.file_uploader("Upload your image")
+uploaded_image = st.file_uploader("Upload your image", type=config.ALLOWED_EXTENSIONS)
+
+file_path = None
+display_image = None
 
 if uploaded_image is not None:
-
     file_path = save_uploaded_image(uploaded_image)
-
-    if file_path is not None:
-
+    if file_path:
         display_image = Image.open(uploaded_image)
+elif selected_sample != "None":
+    file_path = os.path.join(config.SAMPLE_DIR, selected_sample)
+    display_image = Image.open(file_path)
 
-        st.image(display_image, caption="Uploaded Image", width=300)
+if file_path is not None and display_image is not None:
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.image(display_image, caption="Input Image", width=300)
 
-        with st.spinner("Detecting face and finding celebrity match..."):
-
-            features = extract_features(file_path, model, detector)
+    with col2:
+        with st.spinner("Analyzing face and searching database..."):
+            features = utils.extract_features(file_path, model, detector)
 
         if features is None:
-
-            st.error("❌ No face detected. Please upload a clear face image.")
-
+            st.error("❌ No face detected. Please upload a clear image of a face.")
         else:
+            indices, scores = utils.recommend(feature_list, features, top_n=config.TOP_N_MATCHES)
 
-            index_pos = recommend(feature_list, features)
+            if scores[0] < config.SIMILARITY_THRESHOLD:
+                st.warning(f"⚠️ Best match has a low similarity score ({scores[0]:.2f}). Results may not be accurate.")
+            else:
+                st.success("✅ Matches Found!")
 
-            predicted_actor = " ".join(
-                filenames[index_pos].split('\\')[1].split('_')
-            )
-
-            st.success("✅ Match Found!")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.header("Your Image")
-                st.image(display_image, width=300)
-
-            with col2:
-                st.header("You look like")
-                st.subheader(predicted_actor)
-                st.image(filenames[index_pos], width=300)
+            st.header("Top Matches")
+            match_cols = st.columns(len(indices))
+            
+            for i, (idx, score) in enumerate(zip(indices, scores)):
+                actor_name = utils.get_actor_name(filenames[idx])
+                
+                with match_cols[i]:
+                    st.subheader(f"#{i+1}: {actor_name}")
+                    st.markdown(f"**Similarity:** {score*100:.1f}%")
+                    try:
+                        st.image(filenames[idx], width=250)
+                    except:
+                        st.error("Image file missing")

@@ -1,47 +1,49 @@
-from keras_vggface.utils import preprocess_input
 from keras_vggface.vggface import VGGFace
 import numpy as np
 import pickle
-from sklearn.metrics.pairwise import cosine_similarity
 import cv2
 from mtcnn import MTCNN
-from PIL import Image
+import os
+import config
+import utils
 
-feature_list = np.array(pickle.load(open('embedding.pkl','rb')))
-filenames = pickle.load(open('filenames.pkl','rb'))
+# Load Data
+feature_list, filenames = utils.load_data()
+if feature_list is None:
+    print(f"Error: Could not load {config.EMBEDDINGS_FILE}. Please run feature_extractor.py first.")
+    exit(1)
 
-model = VGGFace(model='resnet50',include_top=False,input_shape=(224,224,3),pooling='avg')
-
+# Load Models
+model = VGGFace(
+    model=config.MODEL_NAME,
+    include_top=False,
+    input_shape=config.INPUT_SHAPE,
+    pooling=config.POOLING
+)
 detector = MTCNN()
-# load img -> face detection
-sample_img = cv2.imread('sample/satya.jpg')
-results = detector.detect_faces(sample_img)
 
-x,y,width,height = results[0]['box']
+# Process Sample Image
+sample_image_path = os.path.join(config.SAMPLE_DIR, 'satya.jpg')
+print(f"Processing image: {sample_image_path}")
 
-face = sample_img[y:y+height,x:x+width]
+features = utils.extract_features(sample_image_path, model, detector)
 
-#  extract its features
-image = Image.fromarray(face)
-image = image.resize((224,224))
+if features is None:
+    print("Error: No face detected in the sample image.")
+else:
+    # Find Best Matches
+    indices, scores = utils.recommend(feature_list, features, top_n=1)
+    best_match_idx = indices[0]
+    best_match_score = scores[0]
+    
+    predicted_actor = utils.get_actor_name(filenames[best_match_idx])
+    print(f"Best match: {predicted_actor} (Similarity: {best_match_score:.4f})")
 
-face_array = np.asarray(image)
-
-face_array = face_array.astype('float32')
-
-expanded_img = np.expand_dims(face_array,axis=0)
-preprocessed_img = preprocess_input(expanded_img)
-result = model.predict(preprocessed_img).flatten()
-#print(result)
-#print(result.shape)
-# find the cosine distance of current image with all the 8655 features
-similarity = []
-for i in range(len(feature_list)):
-    similarity.append(cosine_similarity(result.reshape(1,-1),feature_list[i].reshape(1,-1))[0][0])
-
-index_pos = sorted(list(enumerate(similarity)),reverse=True,key=lambda x:x[1])[0][0]
-
-temp_img = cv2.imread(filenames[index_pos])
-cv2.imshow('output',temp_img)
-cv2.waitKey(0)
-# recommend that image
+    # Display the result
+    temp_img = cv2.imread(filenames[best_match_idx])
+    if temp_img is not None:
+        cv2.imshow(f'Match: {predicted_actor}', temp_img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    else:
+        print(f"Error: Could not load the image {filenames[best_match_idx]}")
